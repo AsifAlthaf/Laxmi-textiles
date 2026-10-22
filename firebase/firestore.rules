@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ──────────────────────────────────────────
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'OWNER';
+    }
+
+    function isStaffOrOwner() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['OWNER', 'STAFF'];
+    }
+
+    // ── Users ─────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isOwner();
+      // Allow a new user to create their own profile on first login
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ── Products ──────────────────────────────────────────────────
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isOwner();
+      allow delete: if false; // Never delete products — deactivate instead
+    }
+
+    // ── Inventory Balances ────────────────────────────────────────
+    match /inventoryBalances/{productId} {
+      allow read: if isAuthenticated();
+      // Only backend/owner can write balances (via trusted client ops)
+      allow write: if isStaffOrOwner();
+    }
+
+    // ── Inventory Transactions ────────────────────────────────────
+    match /inventoryTransactions/{txnId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaffOrOwner();
+      allow update, delete: if false; // Immutable audit trail
+    }
+
+    // ── Sales ─────────────────────────────────────────────────────
+    match /sales/{saleId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaffOrOwner();
+      allow update, delete: if false; // Immutable once recorded
+    }
+
+    // ── Suppliers ────────────────────────────────────────────────
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    // ── App Settings ─────────────────────────────────────────────
+    match /appSettings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    // Deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
